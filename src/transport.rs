@@ -37,13 +37,11 @@ pub enum Delivery {
 impl Connection {
     pub fn open<
         T: AsyncRead + AsyncWrite + Send + 'static,
-        E: Executor<Box<dyn Future<Item = (), Error = ()> + Send + 'static>>,
     >(
         client_id: String<Bytes>,
         username: Option<String<Bytes>>,
         password: Option<Bytes>,
         io: T,
-        executor: E,
     ) -> impl Future<Item = Connection, Error = Error> {
         let io = Codec::new().framed(io);
         let connect = Connect {
@@ -65,7 +63,7 @@ impl Connection {
                 if let Packet::ConnectAck { return_code, .. } = packet {
                     if let ConnectReturnCode::ConnectionAccepted = return_code {
                         // todo: surface session_present
-                        Ok(Connection::new(executor, io))
+                        Ok(Connection::new(io))
                     } else {
                         Err(return_code.reason().into())
                     }
@@ -79,10 +77,8 @@ impl Connection {
     }
 
     fn new<
-        T: AsyncRead + AsyncWrite + Send + 'static,
-        E: Executor<Box<dyn Future<Item = (), Error = ()> + Send + 'static>>,
+        T: AsyncRead + AsyncWrite + 'static,
     >(
-        executor: E,
         io: Framed<T, Codec>,
     ) -> Connection {
         let (writer, reader) = io.split();
