@@ -1,4 +1,4 @@
-use proto::{Protocol, QoS};
+use crate::proto::{Protocol, QoS};
 use bytes::Bytes;
 use string::String;
 

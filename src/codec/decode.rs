@@ -1,9 +1,8 @@
 use std::io::Cursor;
 use bytes::{Buf, Bytes};
 use string::{String, TryFrom};
-
-use proto::*;
-use packet::*;
+use crate::proto::*;
+use crate::packet::*;
 use super::*;
 
 macro_rules! check_flag {

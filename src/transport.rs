@@ -1,90 +1,105 @@
-use std::{rc::Rc, cell::RefCell, collections::VecDeque};
-use futures::prelude::*;
-use futures::{future, Future, unsync::{oneshot, mpsc}};
-use tokio_io::{AsyncRead, AsyncWrite, codec::Framed};
-use tokio_core::reactor;
+use crate::codec::Codec;
+use crate::error::{Error, Result};
+use crate::packet::{Connect, ConnectReturnCode, Packet};
+use crate::proto::{Protocol, QoS};
 use bytes::Bytes;
+use futures::prelude::*;
+use futures::unsync::{mpsc, oneshot};
+use futures::{future, Future};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 use string::String;
-use proto::{QoS, Protocol};
-use packet::{Packet, Connect, ConnectReturnCode};
-use codec::Codec;
-
-use error::{Error, Result};
+use tokio::codec::{Decoder, Framed};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::prelude::future::Executor;
 
 type InnerRef = Rc<RefCell<ConnectionInner>>;
 type DeliveryResponse = ();
 type DeliveryPromise = oneshot::Sender<Result<DeliveryResponse>>;
 
 pub struct Connection {
-    inner: InnerRef
+    inner: InnerRef,
 }
 
 pub struct ConnectionInner {
     write_sender: mpsc::UnboundedSender<Packet>,
     pending_ack: VecDeque<(u16, DeliveryPromise)>,
     pending_sub_acks: VecDeque<(u16, DeliveryPromise)>,
-    next_packet_id: u16
+    next_packet_id: u16,
 }
 
 pub enum Delivery {
     Resolved(Result<DeliveryResponse>),
     Pending(oneshot::Receiver<Result<DeliveryResponse>>),
-    Gone
+    Gone,
 }
 
 impl Connection {
-    pub fn open<T: AsyncRead + AsyncWrite + 'static>(client_id: String<Bytes>, handle: reactor::Handle, io: T) -> impl Future<Item = Connection, Error = Error> {
-        let io = io.framed(Codec::new());
+    pub fn open<
+        T: AsyncRead + AsyncWrite + 'static,
+        E: Executor<Box<dyn Future<Item = (), Error = ()>>>,
+    >(
+        client_id: String<Bytes>,
+        username: Option<String<Bytes>>,
+        password: Option<Bytes>,
+        io: T,
+        executor: E,
+    ) -> impl Future<Item = Connection, Error = Error> {
+        let io = Codec::new().framed(io);
         let connect = Connect {
             protocol: Protocol::default(),
             clean_session: false,
             keep_alive: 0,
             last_will: None,
             client_id: client_id,
-            username: None,
-            password: None
+            username,
+            password,
         };
-        io.send(Packet::Connect { connect: Box::new(connect) } )
-            .from_err()
-            .and_then(|io| io.into_future().map_err(|e| e.0.into()))
-            .and_then(|(packet_opt, io)| {
-                if let Some(packet) = packet_opt {
-                    if let Packet::ConnectAck { session_present, return_code } = packet {
-                        if let ConnectReturnCode::ConnectionAccepted = return_code {
-                            // todo: surface session_present
-                            Ok(Connection::new(handle, io))
-                        }
-                        else {
-                            Err(return_code.reason().into())
-                        }
+        io.send(Packet::Connect {
+            connect: Box::new(connect),
+        })
+        .from_err()
+        .and_then(|io| io.into_future().map_err(|e| e.0.into()))
+        .and_then(|(packet_opt, io)| {
+            if let Some(packet) = packet_opt {
+                if let Packet::ConnectAck { return_code, .. } = packet {
+                    if let ConnectReturnCode::ConnectionAccepted = return_code {
+                        // todo: surface session_present
+                        Ok(Connection::new(executor, io))
+                    } else {
+                        Err(return_code.reason().into())
                     }
-                    else {
-                        Err("Protocol violation: expected CONNACK".into())
-                    }
+                } else {
+                    Err("Protocol violation: expected CONNACK".into())
                 }
-                else {
-                    Err("Connection is closed.".into())
-                }
-            })
+            } else {
+                Err("Connection is closed.".into())
+            }
+        })
     }
 
-    fn new<T: AsyncRead + AsyncWrite + 'static>(handle: reactor::Handle, io: Framed<T, Codec>) -> Connection {
+    fn new<
+        T: AsyncRead + AsyncWrite + 'static,
+        E: Executor<Box<dyn Future<Item = (), Error = ()>>>,
+    >(
+        executor: E,
+        io: Framed<T, Codec>,
+    ) -> Connection {
         let (writer, reader) = io.split();
         let (tx, rx) = mpsc::unbounded();
         let connection = Rc::new(RefCell::new(ConnectionInner::new(tx)));
-        let send_fut = writer.sink_map_err(|e| println!("sink err: {}", e)).send_all(rx);
+        let send_fut = writer
+            .sink_map_err(|e| println!("sink err: {}", e))
+            .send_all(rx);
         let reader_conn = connection.clone();
         let read_handling = reader.for_each(move |packet| {
-            reader_conn
-                .borrow_mut()
-                .handle_packet(packet);
+            reader_conn.borrow_mut().handle_packet(packet);
             Ok(())
         });
-        handle.spawn(read_handling.map_err(|e| {
+        executor.execute(Box::new(read_handling.map_err(|e| {
             // todo: handle error while reading
-            println!("MQTT: Error reading: {:?}", e);
-        }));
-        handle.spawn(send_fut.map(|_| ()));
+            println!("MQTT: Error reading: {:?}", e); // todo: propagate errors to close the connection
+        })));
+        executor.execute(Box::new(send_fut.map(|_| ())));
         Connection { inner: connection }
     }
 
@@ -110,11 +125,14 @@ impl ConnectionInner {
             write_sender: sender,
             pending_ack: VecDeque::new(),
             pending_sub_acks: VecDeque::new(),
-            next_packet_id: 1
+            next_packet_id: 1,
         }
     }
 
-    pub fn post_packet(&self, packet: Packet) -> ::std::result::Result<(), mpsc::SendError<Packet>> {
+    pub fn post_packet(
+        &self,
+        packet: Packet,
+    ) -> ::std::result::Result<(), mpsc::SendError<Packet>> {
         self.write_sender.unbounded_send(packet)
     }
 
@@ -127,26 +145,24 @@ impl ConnectionInner {
                         // todo: handle protocol violation
                     }
                     pending.1.send(Ok(()));
-                }
-                else {
+                } else {
                     // todo: handle protocol violation
                 }
-            },
+            }
             Packet::SubscribeAck { packet_id, status } => {
                 if let Some(pending) = self.pending_sub_acks.pop_front() {
                     if pending.0 != packet_id {
-                        // todo: handle protocol violation                        
+                        // todo: handle protocol violation
                     }
                     pending.1.send(Ok(())); // todo: surface subscribe outcome
-                }
-                else {
-                    // todo: handle protocol violation                        
+                } else {
+                    // todo: handle protocol violation
                 }
             }
             Packet::UnsubscribeAck { packet_id } => {} // todo
-            Packet::PingResponse => {} // todo
+            Packet::PingResponse => {}                 // todo
             _ => {
-                // todo: handle protocol violation                        
+                // todo: handle protocol violation
             }
         }
     }
@@ -159,14 +175,13 @@ impl ConnectionInner {
                 qos,
                 topic,
                 packet_id: None,
-                payload
+                payload,
             };
             if let Err(e) = self.post_packet(publish) {
                 return Delivery::Resolved(Err(e.into()));
             }
             Delivery::Resolved(Ok(())) // todo: delay until handed out to network successfully
-        }
-        else {
+        } else {
             let packet_id = self.next_packet_id();
             let publish = Packet::Publish {
                 dup: false,
@@ -174,7 +189,7 @@ impl ConnectionInner {
                 qos,
                 topic,
                 packet_id: Some(packet_id),
-                payload
+                payload,
             };
             let (delivery_tx, delivery_rx) = oneshot::channel();
             if let Err(e) = self.post_packet(publish) {
@@ -189,7 +204,7 @@ impl ConnectionInner {
         let packet_id = self.next_packet_id();
         let subscribe = Packet::Subscribe {
             packet_id,
-            topic_filters
+            topic_filters,
         };
         self.post_packet(subscribe);
         let (delivery_tx, delivery_rx) = oneshot::channel();
@@ -197,12 +212,12 @@ impl ConnectionInner {
         Delivery::Pending(delivery_rx)
     }
 
-    fn next_packet_id(&mut self) -> u16 { // todo: simple wrapping may not work for everything, think about honoring known in-flights
+    fn next_packet_id(&mut self) -> u16 {
+        // todo: simple wrapping may not work for everything, think about honoring known in-flights
         let packet_id = self.next_packet_id;
         if packet_id == ::std::u16::MAX {
             self.next_packet_id = 1;
-        }
-        else {
+        } else {
             self.next_packet_id = packet_id + 1;
         }
         packet_id
@@ -217,7 +232,7 @@ impl Future for Delivery {
             return match receiver.poll() {
                 Ok(Async::Ready(r)) => r.map(|state| Async::Ready(state)),
                 Ok(Async::NotReady) => Ok(Async::NotReady),
-                Err(e) => Err(e.into())
+                Err(e) => Err(e.into()),
             };
         }
 
@@ -225,7 +240,7 @@ impl Future for Delivery {
         if let Delivery::Resolved(r) = old_v {
             return match r {
                 Ok(state) => Ok(Async::Ready(state)),
-                Err(e) => Err(e)
+                Err(e) => Err(e),
             };
         }
         panic!("Delivery was polled already.");

@@ -1,9 +1,8 @@
 use std::io::Cursor;
-use tokio_io::codec::{Decoder, Encoder};
+use tokio::codec::{Decoder, Encoder};
 use bytes::BytesMut;
-
 use super::Packet;
-use error::*;
+use crate::error::*;
 
 mod encode;
 mod decode;

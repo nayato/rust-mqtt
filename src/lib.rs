@@ -4,14 +4,6 @@ extern crate log;
 extern crate bitflags;
 #[macro_use]
 extern crate error_chain;
-extern crate rand;
-extern crate byteorder;
-extern crate bytes;
-extern crate slab;
-extern crate tokio_io;
-extern crate tokio_core;
-extern crate string;
-extern crate futures;
 
 mod error;
 #[macro_use]
@@ -22,12 +14,12 @@ mod packet;
 mod codec;
 mod transport;
 
-pub use proto::{QoS, Protocol};
-pub use topic::{Level, Topic, TopicTree, MatchTopic};
-pub use packet::{Packet, LastWill, Connect, ConnectReturnCode, SubscribeReturnCode};
-pub use codec::Codec;
-pub use error::*;
-pub use transport::{Connection, Delivery};
+pub use crate::proto::{QoS, Protocol};
+pub use crate::topic::{Level, Topic, TopicTree, MatchTopic};
+pub use crate::packet::{Packet, LastWill, Connect, ConnectReturnCode, SubscribeReturnCode};
+pub use crate::codec::Codec;
+pub use crate::error::*;
+pub use crate::transport::{Connection, Delivery};
 
 // http://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml
 pub const TCP_PORT: u16 = 1883;

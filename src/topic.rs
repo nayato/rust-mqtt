@@ -8,8 +8,8 @@ use std::{
 };
 use slab::Slab;
 
-use error::*;
-use error::ErrorKind::*;
+use crate::error::*;
+use crate::error::ErrorKind::*;
 
 #[inline]
 fn is_metadata<T: AsRef<str>>(s: T) -> bool {

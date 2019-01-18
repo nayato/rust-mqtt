@@ -8,23 +8,23 @@ homepage = "https://github.com/flier/rust-mqtt"
 repository = "https://github.com/flier/rust-mqtt.git"
 keywords = ["MQTT", "IoT", "messaging"]
 license = "MIT/Apache-2.0"
+edition = "2018"
 
 [dependencies]
-log = "0.3"
+log = "0.4"
 bitflags = "1.0"
-error-chain = "0.11"
-rand = "0.3"
-byteorder = "1.0"
+error-chain = "0.12"
+rand = "0.6"
+byteorder = "1.2"
 slab = "0.4"
 bytes = "0.4"
 string = "0.1"
-tokio-io = "0.1"
-tokio-core = "0.1"
+tokio = "0.1"
 futures = "0.1"
 
 [dev-dependencies]
-env_logger = "^0.3"
-clap = "^2"
+env_logger = "0.6"
+clap = "2"
 
 [lib]
 name = "mqtt"

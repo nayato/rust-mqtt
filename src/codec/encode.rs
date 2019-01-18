@@ -1,8 +1,7 @@
 use bytes::{Bytes, BytesMut, BufMut};
 use string::String;
-
-use proto::*;
-use packet::*;
+use crate::proto::*;
+use crate::packet::*;
 use super::*;
 
 pub const MAX_VARIABLE_LENGTH: usize = 268435455; // 0xFF,0xFF,0xFF,0x7F
