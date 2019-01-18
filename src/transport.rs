@@ -11,6 +11,7 @@ use string::String;
 use tokio::codec::{Decoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::prelude::future::Executor;
+use tokio::runtime::current_thread::spawn;
 
 type InnerRef = Rc<RefCell<ConnectionInner>>;
 type DeliveryResponse = ();
@@ -35,8 +36,8 @@ pub enum Delivery {
 
 impl Connection {
     pub fn open<
-        T: AsyncRead + AsyncWrite + 'static,
-        E: Executor<Box<dyn Future<Item = (), Error = ()>>>,
+        T: AsyncRead + AsyncWrite + Send + 'static,
+        E: Executor<Box<dyn Future<Item = (), Error = ()> + Send + 'static>>,
     >(
         client_id: String<Bytes>,
         username: Option<String<Bytes>>,
@@ -78,8 +79,8 @@ impl Connection {
     }
 
     fn new<
-        T: AsyncRead + AsyncWrite + 'static,
-        E: Executor<Box<dyn Future<Item = (), Error = ()>>>,
+        T: AsyncRead + AsyncWrite + Send + 'static,
+        E: Executor<Box<dyn Future<Item = (), Error = ()> + Send + 'static>>,
     >(
         executor: E,
         io: Framed<T, Codec>,
@@ -95,11 +96,11 @@ impl Connection {
             reader_conn.borrow_mut().handle_packet(packet);
             Ok(())
         });
-        executor.execute(Box::new(read_handling.map_err(|e| {
+        spawn(read_handling.map_err(|e| {
             // todo: handle error while reading
             println!("MQTT: Error reading: {:?}", e); // todo: propagate errors to close the connection
-        })));
-        executor.execute(Box::new(send_fut.map(|_| ())));
+        }));
+        spawn(send_fut.map(|_| ()));
         Connection { inner: connection }
     }
 
