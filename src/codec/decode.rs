@@ -8,8 +8,15 @@ use super::*;
 macro_rules! check_flag {
     ($flags:expr, $flag:expr) => (($flags & $flag.bits()) == $flag.bits())
 }
+macro_rules! ensure {
+    ($cond:expr, $e:expr) => {
+        if !($cond) {
+            return Err($e.into());
+        }
+    };
+}
 
-pub fn decode_variable_length(src: &[u8]) -> Result<Option<(usize, usize)>> {
+pub fn decode_variable_length(src: &[u8]) -> Result<Option<(usize, usize),>> {
     if let Some((len, consumed, more)) = src.iter()
         .enumerate()
         .scan((0, true), |state, (idx, x)| {

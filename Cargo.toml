@@ -13,7 +13,7 @@ edition = "2018"
 [dependencies]
 log = "0.4"
 bitflags = "1.0"
-error-chain = "0.12"
+# error-chain = "0.12"
 rand = "0.6"
 byteorder = "1.2"
 slab = "0.4"
@@ -21,6 +21,7 @@ bytes = "0.4"
 string = "0.1"
 tokio = "0.1"
 futures = "0.1"
+derive_more = "0.13"
 
 [dev-dependencies]
 env_logger = "0.6"

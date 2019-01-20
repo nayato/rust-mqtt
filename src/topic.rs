@@ -9,7 +9,6 @@ use std::{
 use slab::Slab;
 
 use crate::error::*;
-use crate::error::ErrorKind::*;
 
 #[inline]
 fn is_metadata<T: AsRef<str>>(s: T) -> bool {
@@ -261,7 +260,7 @@ impl FromStr for Level {
             "" => Ok(Level::Blank),
             _ => {
                 if s.contains(|c| c == '+' || c == '#') {
-                    bail!(InvalidTopic)
+                    Err(Error::InvalidTopic)
                 } else if is_metadata(s) {
                     Ok(Level::Metadata(String::from(s)))
                 } else {
@@ -285,7 +284,7 @@ impl FromStr for Topic {
                 if topic.is_valid() {
                     Ok(topic)
                 } else {
-                    bail!(InvalidTopic)
+                    Err(Error::InvalidTopic)
                 }
             })
     }

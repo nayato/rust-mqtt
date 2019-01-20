@@ -1,4 +1,4 @@
-use std::convert::From;
+use derive_more::From;
 
 #[derive(Debug)]
 pub enum DecodeError {
@@ -8,33 +8,23 @@ pub enum DecodeError {
     ConnectReservedFlagSet,
     ConnAckReservedFlagSet,
     InvalidClientId,
-    UnsupportedPacketType
+    UnsupportedPacketType,
 }
 
-error_chain!{
-    foreign_links {
-        Fmt(::std::fmt::Error);
-        Io(::std::io::Error);
-        Canceled(::futures::Canceled);
-        Utf8(::std::str::Utf8Error);
-        ConnectionGone(::futures::unsync::mpsc::SendError<crate::packet::Packet>);
-    }
-
-    errors {
-        DecodeError(e: DecodeError) {
-            description("error occured while decoding")
-            display("error occured while decoding: '{:?}'", e)
-        }
-        OutOfMemory
-        InvalidState
-        InvalidPacket
-        InvalidTopic
-        SpawnError
-    }
+#[derive(Debug, From)]
+pub enum Error {
+    Fmt(::std::fmt::Error),
+    Io(::std::io::Error),
+    Canceled(::futures::Canceled),
+    Utf8(::std::str::Utf8Error),
+    ConnectionGone(::futures::unsync::mpsc::SendError<crate::packet::Packet>),
+    DecodeError(DecodeError),
+    OutOfMemory,
+    InvalidState,
+    InvalidPacket,
+    InvalidTopic,
+    SpawnError,
+    Other(&'static str),
 }
 
-impl From<DecodeError> for Error {
-    fn from(v: DecodeError) -> Error {
-        ErrorKind::DecodeError(v).into()
-    }
-}
+pub type Result<T> = std::result::Result<T, Error>;

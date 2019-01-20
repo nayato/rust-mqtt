@@ -1,5 +1,5 @@
 use crate::codec::Codec;
-use crate::error::{Error, Result};
+use crate::error::*;
 use crate::packet::{Connect, ConnectReturnCode, Packet};
 use crate::proto::{Protocol, QoS};
 use bytes::Bytes;
@@ -10,7 +10,6 @@ use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 use string::String;
 use tokio::codec::{Decoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::prelude::future::Executor;
 use tokio::runtime::current_thread::spawn;
 
 type InnerRef = Rc<RefCell<ConnectionInner>>;
@@ -85,7 +84,7 @@ impl Connection {
         let (tx, rx) = mpsc::unbounded();
         let connection = Rc::new(RefCell::new(ConnectionInner::new(tx)));
         let send_fut = writer
-            .sink_map_err(|e| println!("sink err: {}", e))
+            .sink_map_err(|e| println!("sink err: {:?}", e))
             .send_all(rx);
         let reader_conn = connection.clone();
         let read_handling = reader.for_each(move |packet| {

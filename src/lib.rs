@@ -3,7 +3,7 @@ extern crate log;
 #[macro_use]
 extern crate bitflags;
 #[macro_use]
-extern crate error_chain;
+extern crate derive_more;
 
 mod error;
 #[macro_use]
@@ -18,7 +18,7 @@ pub use crate::proto::{QoS, Protocol};
 pub use crate::topic::{Level, Topic, TopicTree, MatchTopic};
 pub use crate::packet::{Packet, LastWill, Connect, ConnectReturnCode, SubscribeReturnCode};
 pub use crate::codec::Codec;
-pub use crate::error::*;
+pub use crate::error::{DecodeError, Error};
 pub use crate::transport::{Connection, Delivery};
 
 // http://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml
