@@ -24,7 +24,13 @@ pub enum Error {
     InvalidPacket,
     InvalidTopic,
     SpawnError,
-    Other(&'static str),
+    Other(String),
+}
+
+impl<'a> From<&'a str> for Error {
+    fn from(v: &'a str) -> Error {
+        Error::Other(v.to_owned())
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
