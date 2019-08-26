@@ -2,8 +2,6 @@
 extern crate log;
 #[macro_use]
 extern crate bitflags;
-#[macro_use]
-extern crate derive_more;
 
 mod error;
 #[macro_use]
