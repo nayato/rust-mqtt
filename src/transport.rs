@@ -74,16 +74,18 @@ impl Connection {
     fn new<T: AsyncRead + AsyncWrite + 'static>(
         io: Framed<T, Codec>,
     ) -> (Connection, impl Future<Output = Result<(), Error>>) {
-        let (mut writer, reader) = io.split();
+        let (mut writer, mut reader) = io.split();
         let (tx, rx) = mpsc::unbounded();
         let connection = Rc::new(RefCell::new(ConnectionInner::new(tx)));
         let reader_conn = connection.clone();
         let drive_fut = async move {
             let mut rx = rx.map(|i| Ok(i));
-            let read_handling = reader.try_for_each(move |packet| {
-                reader_conn.borrow_mut().handle_packet(packet);
-                future::ok(())
-            });
+            let read_handling = async move {
+                while let Some(packet) = reader.next().await {
+                    reader_conn.borrow_mut().handle_packet(packet?);
+                }
+                Ok(())
+            };
             futures::select! {
                 read = read_handling.fuse() => read,
                 send = writer.send_all(&mut rx).fuse() => send,
