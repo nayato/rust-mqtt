@@ -138,7 +138,7 @@ impl ConnectionInner {
                     // todo: handle protocol violation
                 }
             }
-            Packet::SubscribeAck { packet_id, status } => {
+            Packet::SubscribeAck { packet_id, status } => { // todo: honor status
                 if let Some(pending) = self.pending_sub_acks.pop_front() {
                     if pending.0 != packet_id {
                         // todo: handle protocol violation
