@@ -61,7 +61,7 @@ fn write_content(packet: &Packet, dst: &mut BytesMut) {
 
                     dst.put_slice(&[protocol.level(), flags.bits()]);
 
-                    dst.put_u16_be(keep_alive);
+                    dst.put_u16(keep_alive);
 
                     write_utf8_str(client_id, dst);
 
@@ -90,10 +90,10 @@ fn write_content(packet: &Packet, dst: &mut BytesMut) {
             write_utf8_str(topic, dst);
 
             if qos == QoS::AtLeastOnce || qos == QoS::ExactlyOnce {
-                dst.put_u16_be(packet_id.unwrap());
+                dst.put_u16(packet_id.unwrap());
             }
 
-            dst.put(payload);
+            dst.put_slice(payload.as_ref());
         }
 
         Packet::PublishAck { packet_id } |
@@ -101,11 +101,11 @@ fn write_content(packet: &Packet, dst: &mut BytesMut) {
         Packet::PublishRelease { packet_id } |
         Packet::PublishComplete { packet_id } |
         Packet::UnsubscribeAck { packet_id } => {
-            dst.put_u16_be(packet_id);
+            dst.put_u16(packet_id);
         }
 
         Packet::Subscribe { packet_id, ref topic_filters } => {
-            dst.put_u16_be(packet_id);
+            dst.put_u16(packet_id);
 
             for &(ref filter, qos) in topic_filters {
                 write_utf8_str(filter, dst);
@@ -114,7 +114,7 @@ fn write_content(packet: &Packet, dst: &mut BytesMut) {
         }
 
         Packet::SubscribeAck { packet_id, ref status } => {
-            dst.put_u16_be(packet_id);
+            dst.put_u16(packet_id);
 
             let buf: Vec<u8> = status.iter()
                 .map(|s| if let SubscribeReturnCode::Success(qos) = *s {
@@ -128,7 +128,7 @@ fn write_content(packet: &Packet, dst: &mut BytesMut) {
         }
 
         Packet::Unsubscribe { packet_id, ref topic_filters } => {
-            dst.put_u16_be(packet_id);
+            dst.put_u16(packet_id);
 
             for filter in topic_filters {
                 write_utf8_str(filter, dst);
@@ -141,15 +141,15 @@ fn write_content(packet: &Packet, dst: &mut BytesMut) {
 
 #[inline]
 fn write_utf8_str(s: &String<Bytes>, dst: &mut BytesMut) {
-    dst.put_u16_be(s.len() as u16);
-    dst.put(s.get_ref());
+    dst.put_u16(s.len() as u16);
+    dst.put_slice(s.get_ref().as_ref());
 }
 
 #[inline]
 fn write_fixed_length_bytes(s: &Bytes, dst: &mut BytesMut) {
     let r = s.as_ref();
-    dst.put_u16_be(r.len() as u16);
-    dst.put(s);
+    dst.put_u16(r.len() as u16);
+    dst.put_slice(s.as_ref());
 }
 
 #[inline]

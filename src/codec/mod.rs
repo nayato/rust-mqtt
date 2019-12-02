@@ -1,5 +1,5 @@
 use std::io::Cursor;
-use tokio::codec::{Decoder, Encoder};
+use tokio_util::codec::{Decoder, Encoder};
 use bytes::BytesMut;
 use super::Packet;
 use crate::error::*;
@@ -53,7 +53,7 @@ impl Decoder for Codec {
     type Item = Packet;
     type Error = Error;
 
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Error> {
         loop {
             match self.state {
                 DecodeState::FrameHeader => {
@@ -101,7 +101,7 @@ impl Encoder for Codec {
     type Item = Packet;
     type Error = Error;
 
-    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<()> {
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Error> {
         let content_size = get_encoded_size(&item);
         dst.reserve(content_size + 5);
         write_packet(&item, dst);

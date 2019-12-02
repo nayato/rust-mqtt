@@ -28,7 +28,7 @@ unsafe impl Send for Level {}
 unsafe impl Sync for Level {}
 
 impl Level {
-    pub fn parse<T: AsRef<str>>(s: T) -> Result<Level> {
+    pub fn parse<T: AsRef<str>>(s: T) -> Result<Level, Error> {
         Level::from_str(s.as_ref())
     }
 
@@ -253,7 +253,7 @@ impl FromStr for Level {
     type Err = Error;
 
     #[inline]
-    fn from_str(s: &str) -> Result<Self> {
+    fn from_str(s: &str) -> Result<Self, Error> {
         match s {
             "+" => Ok(Level::SingleWildcard),
             "#" => Ok(Level::MultiWildcard),
@@ -275,10 +275,10 @@ impl FromStr for Topic {
     type Err = Error;
 
     #[inline]
-    fn from_str(s: &str) -> Result<Self> {
+    fn from_str(s: &str) -> Result<Self, Error> {
         s.split('/')
             .map(|level| Level::from_str(level))
-            .collect::<Result<Vec<_>>>()
+            .collect::<Result<Vec<_>, Error>>()
             .map(Topic)
             .and_then(|topic| {
                 if topic.is_valid() {

@@ -16,7 +16,7 @@ macro_rules! ensure {
     };
 }
 
-pub fn decode_variable_length(src: &[u8]) -> Result<Option<(usize, usize),>> {
+pub fn decode_variable_length(src: &[u8]) -> Result<Option<(usize, usize)>, Error> {
     if let Some((len, consumed, more)) = src.iter()
         .enumerate()
         .scan((0, true), |state, (idx, x)| {
@@ -36,7 +36,7 @@ pub fn decode_variable_length(src: &[u8]) -> Result<Option<(usize, usize),>> {
     Ok(None)
 }
 
-pub(crate) fn read_packet(src: &mut Cursor<Bytes>, header: FixedHeader) -> Result<Packet> {
+pub(crate) fn read_packet(src: &mut Cursor<Bytes>, header: FixedHeader) -> Result<Packet, Error> {
     match header.packet_type {
         CONNECT => decode_connect_packet(src),
         CONNACK => decode_connect_ack_packet(src),
@@ -68,9 +68,9 @@ pub(crate) fn read_packet(src: &mut Cursor<Bytes>, header: FixedHeader) -> Resul
     }
 }
 
-fn decode_connect_packet(src: &mut Cursor<Bytes>) -> Result<Packet> {
+fn decode_connect_packet(src: &mut Cursor<Bytes>) -> Result<Packet, Error> {
     ensure!(src.remaining() >= 10, DecodeError::InvalidLength);
-    let len = src.get_u16_be();
+    let len = src.get_u16();
     ensure!(len == 4, DecodeError::InvalidProtocol);
 
     ensure!(&src.bytes()[0..4] == b"MQTT", DecodeError::InvalidProtocol);
@@ -85,7 +85,7 @@ fn decode_connect_packet(src: &mut Cursor<Bytes>) -> Result<Packet> {
     let flags = src.get_u8();
     ensure!((flags & 0x01) == 0, DecodeError::ConnectReservedFlagSet);
 
-    let keep_alive = src.get_u16_be();
+    let keep_alive = src.get_u16();
     let client_id = decode_utf8_str(src)?;
     ensure!(
         !client_id.is_empty() || check_flag!(flags, ConnectFlags::CLEAN_SESSION),
@@ -136,7 +136,7 @@ fn decode_connect_packet(src: &mut Cursor<Bytes>) -> Result<Packet> {
     })
 }
 
-fn decode_connect_ack_packet(src: &mut Cursor<Bytes>) -> Result<Packet> {
+fn decode_connect_ack_packet(src: &mut Cursor<Bytes>) -> Result<Packet, Error> {
     ensure!(src.remaining() >= 2, DecodeError::InvalidLength);
     let flags = src.get_u8();
     ensure!(
@@ -151,7 +151,7 @@ fn decode_connect_ack_packet(src: &mut Cursor<Bytes>) -> Result<Packet> {
     })
 }
 
-fn decode_publish_packet(src: &mut Cursor<Bytes>, header: FixedHeader) -> Result<Packet> {
+fn decode_publish_packet(src: &mut Cursor<Bytes>, header: FixedHeader) -> Result<Packet, Error> {
     let topic = decode_utf8_str(src)?;
     let qos = QoS::from((header.packet_flags & 0b0110) >> 1);
     let packet_id = if qos == QoS::AtMostOnce {
@@ -173,7 +173,7 @@ fn decode_publish_packet(src: &mut Cursor<Bytes>, header: FixedHeader) -> Result
     })
 }
 
-fn decode_subscribe_packet(src: &mut Cursor<Bytes>) -> Result<Packet> {
+fn decode_subscribe_packet(src: &mut Cursor<Bytes>) -> Result<Packet, Error> {
     let packet_id = read_u16(src)?;
     let mut topic_filters = Vec::new();
     while src.remaining() > 0 {
@@ -189,10 +189,10 @@ fn decode_subscribe_packet(src: &mut Cursor<Bytes>) -> Result<Packet> {
     })
 }
 
-fn decode_subscribe_ack_packet(src: &mut Cursor<Bytes>) -> Result<Packet> {
+fn decode_subscribe_ack_packet(src: &mut Cursor<Bytes>) -> Result<Packet, Error> {
     let packet_id = read_u16(src)?;
-    let status = src.iter()
-        .map(|code| if code == 0x80 {
+    let status = src.bytes().iter()
+        .map(|code| if *code == 0x80 {
             SubscribeReturnCode::Failure
         } else {
             SubscribeReturnCode::Success(QoS::from(code & 0x03))
@@ -201,7 +201,7 @@ fn decode_subscribe_ack_packet(src: &mut Cursor<Bytes>) -> Result<Packet> {
     Ok(Packet::SubscribeAck { packet_id, status })
 }
 
-fn decode_unsubscribe_packet(src: &mut Cursor<Bytes>) -> Result<Packet> {
+fn decode_unsubscribe_packet(src: &mut Cursor<Bytes>) -> Result<Packet, Error> {
     let packet_id = read_u16(src)?;
     let mut topic_filters = Vec::new();
     while src.remaining() > 0 {
@@ -213,27 +213,27 @@ fn decode_unsubscribe_packet(src: &mut Cursor<Bytes>) -> Result<Packet> {
     })
 }
 
-fn decode_length_bytes(src: &mut Cursor<Bytes>) -> Result<Bytes> {
+fn decode_length_bytes(src: &mut Cursor<Bytes>) -> Result<Bytes, Error> {
     let len = read_u16(src)? as usize;
     ensure!(src.remaining() >= len, DecodeError::InvalidLength);
     Ok(take(src, len))
 }
 
-fn decode_utf8_str(src: &mut Cursor<Bytes>) -> Result<String<Bytes>> {
+fn decode_utf8_str(src: &mut Cursor<Bytes>) -> Result<String<Bytes>, Error> {
     let bytes = decode_length_bytes(src)?;
     Ok(String::try_from(bytes)?)
 }
 
 fn take(buf: &mut Cursor<Bytes>, n: usize) -> Bytes {
     let pos = buf.position() as usize;
-    let ret = buf.get_ref().slice(pos, pos + n);
+    let ret = buf.get_ref().slice(pos..pos + n);
     buf.set_position((pos + n) as u64);
     ret
 }
 
-fn read_u16(src: &mut Cursor<Bytes>) -> Result<u16> {
+fn read_u16(src: &mut Cursor<Bytes>) -> Result<u16, Error> {
     ensure!(src.remaining() >= 2, DecodeError::InvalidLength);
-    Ok(src.get_u16_be())
+    Ok(src.get_u16())
 }
 
 #[cfg(test)]

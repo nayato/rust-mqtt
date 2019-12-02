@@ -1,3 +1,4 @@
+use futures::channel::oneshot::Canceled;
 use derive_more::From;
 
 #[derive(Debug)]
@@ -15,9 +16,9 @@ pub enum DecodeError {
 pub enum Error {
     Fmt(::std::fmt::Error),
     Io(::std::io::Error),
-    Canceled(::futures::Canceled),
+    Canceled(Canceled),
     Utf8(::std::str::Utf8Error),
-    ConnectionGone(::futures::unsync::mpsc::SendError<crate::packet::Packet>),
+    ConnectionGone(::futures::channel::mpsc::TrySendError<crate::packet::Packet>),
     DecodeError(DecodeError),
     OutOfMemory,
     InvalidState,
@@ -32,5 +33,3 @@ impl<'a> From<&'a str> for Error {
         Error::Other(v.to_owned())
     }
 }
-
-pub type Result<T> = std::result::Result<T, Error>;

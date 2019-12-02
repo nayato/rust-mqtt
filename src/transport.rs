@@ -3,18 +3,19 @@ use crate::error::*;
 use crate::packet::{Connect, ConnectReturnCode, Packet};
 use crate::proto::{Protocol, QoS};
 use bytes::Bytes;
-use futures::prelude::*;
-use futures::unsync::{mpsc, oneshot};
-use futures::{future, Future};
+use futures::channel::{mpsc, oneshot};
+use futures::{future, Future, FutureExt, SinkExt, StreamExt, TryStreamExt};
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 use string::String;
-use tokio::codec::{Decoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::runtime::current_thread::spawn;
+use tokio_util::codec::{Decoder, Framed};
 
 type InnerRef = Rc<RefCell<ConnectionInner>>;
 type DeliveryResponse = ();
-type DeliveryPromise = oneshot::Sender<Result<DeliveryResponse>>;
+type DeliveryPromise = oneshot::Sender<Result<DeliveryResponse, Error>>;
 
 pub struct Connection {
     inner: InnerRef,
@@ -28,21 +29,19 @@ pub struct ConnectionInner {
 }
 
 pub enum Delivery {
-    Resolved(Result<DeliveryResponse>),
-    Pending(oneshot::Receiver<Result<DeliveryResponse>>),
+    Resolved(Result<DeliveryResponse, Error>),
+    Pending(oneshot::Receiver<Result<DeliveryResponse, Error>>),
     Gone,
 }
 
 impl Connection {
-    pub fn open<
-        T: AsyncRead + AsyncWrite + Send + 'static,
-    >(
+    pub async fn open<T: AsyncRead + AsyncWrite + Send + Unpin + 'static>(
         client_id: String<Bytes>,
         username: Option<String<Bytes>>,
         password: Option<Bytes>,
         io: T,
-    ) -> impl Future<Item = Connection, Error = Error> {
-        let io = Codec::new().framed(io);
+    ) -> Result<(Connection, impl Future<Output = Result<(), Error>>), Error> {
+        let mut io = Codec::new().framed(io);
         let connect = Connect {
             protocol: Protocol::default(),
             clean_session: false,
@@ -55,48 +54,42 @@ impl Connection {
         io.send(Packet::Connect {
             connect: Box::new(connect),
         })
-        .from_err()
-        .and_then(|io| io.into_future().map_err(|e| e.0.into()))
-        .and_then(|(packet_opt, io)| {
-            if let Some(packet) = packet_opt {
-                if let Packet::ConnectAck { return_code, .. } = packet {
-                    if let ConnectReturnCode::ConnectionAccepted = return_code {
-                        // todo: surface session_present
-                        Ok(Connection::new(io))
-                    } else {
-                        Err(return_code.reason().into())
-                    }
+        .await?;
+        if let Some(packet_result) = io.next().await {
+            if let Packet::ConnectAck { return_code, .. } = packet_result? {
+                if let ConnectReturnCode::ConnectionAccepted = return_code {
+                    // todo: surface session_present
+                    Ok(Connection::new(io))
                 } else {
-                    Err("Protocol violation: expected CONNACK".into())
+                    Err(return_code.reason().into())
                 }
             } else {
-                Err("Connection is closed.".into())
+                Err("Protocol violation: expected CONNACK".into())
             }
-        })
+        } else {
+            Err("Connection is closed.".into())
+        }
     }
 
-    fn new<
-        T: AsyncRead + AsyncWrite + 'static,
-    >(
+    fn new<T: AsyncRead + AsyncWrite + 'static>(
         io: Framed<T, Codec>,
-    ) -> Connection {
-        let (writer, reader) = io.split();
+    ) -> (Connection, impl Future<Output = Result<(), Error>>) {
+        let (mut writer, reader) = io.split();
         let (tx, rx) = mpsc::unbounded();
         let connection = Rc::new(RefCell::new(ConnectionInner::new(tx)));
-        let send_fut = writer
-            .sink_map_err(|e| println!("sink err: {:?}", e))
-            .send_all(rx);
         let reader_conn = connection.clone();
-        let read_handling = reader.for_each(move |packet| {
-            reader_conn.borrow_mut().handle_packet(packet);
-            Ok(())
-        });
-        spawn(read_handling.map_err(|e| {
-            // todo: handle error while reading
-            println!("MQTT: Error reading: {:?}", e); // todo: propagate errors to close the connection
-        }));
-        spawn(send_fut.map(|_| ()));
-        Connection { inner: connection }
+        let drive_fut = async move {
+            let mut rx = rx.map(|i| Ok(i));
+            let read_handling = reader.try_for_each(move |packet| {
+                reader_conn.borrow_mut().handle_packet(packet);
+                future::ok(())
+            });
+            futures::select! {
+                read = read_handling.fuse() => read,
+                send = writer.send_all(&mut rx).fuse() => send,
+            }
+        };
+        (Connection { inner: connection }, drive_fut)
     }
 
     pub fn send(&self, qos: QoS, topic: String<Bytes>, payload: Bytes) -> Delivery {
@@ -110,7 +103,7 @@ impl Connection {
         self.inner.borrow_mut().subscribe(topic_filters)
     }
 
-    pub fn close(self) -> impl Future<Item = (), Error = Error> {
+    pub fn close(self) -> impl Future<Output = Result<(), Error>> {
         future::ok(())
     }
 }
@@ -128,7 +121,7 @@ impl ConnectionInner {
     pub fn post_packet(
         &self,
         packet: Packet,
-    ) -> ::std::result::Result<(), mpsc::SendError<Packet>> {
+    ) -> std::result::Result<(), mpsc::TrySendError<Packet>> {
         self.write_sender.unbounded_send(packet)
     }
 
@@ -221,23 +214,23 @@ impl ConnectionInner {
 }
 
 impl Future for Delivery {
-    type Item = DeliveryResponse;
-    type Error = Error;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        if let Delivery::Pending(ref mut receiver) = *self {
-            return match receiver.poll() {
-                Ok(Async::Ready(r)) => r.map(|state| Async::Ready(state)),
-                Ok(Async::NotReady) => Ok(Async::NotReady),
-                Err(e) => Err(e.into()),
-            };
-        }
+    type Output = Result<DeliveryResponse, Error>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        unsafe {
+            let this = self.get_unchecked_mut();
+            if let Delivery::Pending(ref mut receiver) = *this {
+                return Poll::Ready(
+                    futures::ready!(Pin::new_unchecked(receiver).poll(cx))?.map(|state| state),
+                );
+            }
 
-        let old_v = ::std::mem::replace(self, Delivery::Gone);
-        if let Delivery::Resolved(r) = old_v {
-            return match r {
-                Ok(state) => Ok(Async::Ready(state)),
-                Err(e) => Err(e),
-            };
+            let old_v = ::std::mem::replace(this, Delivery::Gone);
+            if let Delivery::Resolved(r) = old_v {
+                return match r {
+                    Ok(state) => Poll::Ready(Ok(state)),
+                    Err(e) => Poll::Ready(Err(e)),
+                };
+            }
         }
         panic!("Delivery was polled already.");
     }
